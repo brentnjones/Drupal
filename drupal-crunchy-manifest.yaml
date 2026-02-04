@@ -1,0 +1,253 @@
+---
+# PostgreSQL Cluster using Crunchy Data
+apiVersion: postgres-operator.crunchydata.com/v1beta1
+kind: PostgresCluster
+metadata:
+  name: drupal-postgres
+  namespace: default
+spec:
+  image: registry.developers.crunchydata.com/crunchydata/crunchy-postgres:ubi8-15.1-0
+  postgresVersion: 15
+  
+  instances:
+    - name: instance1
+      replicas: 3
+      resources:
+        requests:
+          cpu: 500m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+      dataVolumeClaimSpec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+  
+  backups:
+    pgbackrest:
+      image: registry.developers.crunchydata.com/crunchydata/crunchy-pgbackrest:ubi8-2.45.1-0
+      repos:
+        - name: repo1
+          volume:
+            volumeClaimSpec:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 20Gi
+
+---
+# PersistentVolumeClaim for Drupal files
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drupal-files
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ConfigMap for Drupal database settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: drupal-settings
+  namespace: default
+data:
+  settings-extra.php: |
+    <?php
+    // Crunchy Data PostgreSQL Configuration
+    $databases['default']['default'] = array(
+      'driver' => 'pgsql',
+      'database' => 'drupal_db',
+      'username' => 'drupal_user',
+      'password' => 'DRUPAL_PASSWORD_HERE',
+      'host' => 'drupal-postgres-primary.default.svc.cluster.local',
+      'port' => '5432',
+      'prefix' => '',
+    );
+    
+    // Trusted hosts for SSL/TLS
+    $settings['trusted_host_patterns'] = array(
+      '^drupal\.local$',
+      '^drupal$',
+      '^localhost$',
+      '^127\.0\.0\.1$',
+      '^[^/]+\.example\.com$',
+    );
+
+---
+# Secret for PostgreSQL password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: drupal-postgres-secret
+  namespace: default
+type: Opaque
+stringData:
+  password: CHANGE_THIS_PASSWORD
+
+---
+# Secret for TLS certificate (self-signed)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: drupal-tls
+  namespace: default
+type: kubernetes.io/tls
+stringData:
+  tls.crt: |
+    -----BEGIN CERTIFICATE-----
+    # Self-signed certificate content here
+    # Generate with: openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    #   -keyout tls.key -out tls.crt -subj "/CN=drupal.local"
+    -----END CERTIFICATE-----
+  tls.key: |
+    -----BEGIN PRIVATE KEY-----
+    # Private key content here
+    -----END PRIVATE KEY-----
+
+---
+# Drupal Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal
+  namespace: default
+  labels:
+    app: drupal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drupal
+  template:
+    metadata:
+      labels:
+        app: drupal
+    spec:
+      containers:
+      - name: drupal
+        image: drupal:10-apache
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 443
+          name: https
+        env:
+        - name: POSTGRES_HOST
+          value: "drupal-postgres-primary.default.svc.cluster.local"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_DB
+          value: "drupal_db"
+        - name: POSTGRES_USER
+          value: "drupal_user"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: drupal-postgres-secret
+              key: password
+        volumeMounts:
+        - name: drupal-files
+          mountPath: /var/www/html/sites/default/files
+        - name: drupal-settings
+          mountPath: /var/www/html/sites/default
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+      volumes:
+      - name: drupal-files
+        persistentVolumeClaim:
+          claimName: drupal-files
+      - name: drupal-settings
+        configMap:
+          name: drupal-settings
+
+---
+# Drupal Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: drupal
+  namespace: default
+  labels:
+    app: drupal
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+  selector:
+    app: drupal
+
+---
+# Drupal Ingress with TLS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: drupal-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  tls:
+  - hosts:
+    - drupal.local
+    - drupal
+    secretName: drupal-tls
+  rules:
+  - host: drupal.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: drupal
+            port:
+              number: 80
+  - host: drupal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: drupal
+            port:
+              number: 80

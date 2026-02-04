@@ -1,0 +1,11 @@
+=== Drupal Installation with Crunchy Data PostgreSQL ===
+Namespace: msu
+PostgreSQL Cluster: drupal-postgres
+Storage Class: ocs-storagecluster-ceph-rbd
+PostgreSQL Password: 8adTeD0xzqLZ+kcF6Ft3c20Z6+Ug8CfVXv3KpobnKOk=
+
+[1/6] Namespace msu already exists
+[2/6] Creating PostgreSQL cluster (3 nodes) with Crunchy Data...
+[2/6] Creating PostgreSQL cluster (3 nodes) with Crunchy Data...
+postgrescluster.postgres-operator.crunchydata.com/drupal-postgres created
+Waiting for PostgreSQL cluster to be ready...

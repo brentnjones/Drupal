@@ -1,0 +1,67 @@
+=== Drupal Installation with Crunchy Data PostgreSQL ===
+Namespace: msu
+PostgreSQL Cluster: drupal-postgres
+Storage Class: ocs-storagecluster-ceph-rbd
+PostgreSQL Password: MhvxFl4+3lnmgJhGV/vhsm9AwLryRC3Jc9KYoywTTHU=
+
+[1/6] Namespace msu already exists
+[2/6] Creating PostgreSQL cluster (3 nodes) with Crunchy Data...
+postgrescluster.postgres-operator.crunchydata.com/drupal-postgres created
+Waiting for PostgreSQL cluster to be ready...
+pod/drupal-postgres-instance1-4fn7-0 condition met
+Configuring database permissions...
+Schema permissions already set
+Database owner already set
+Database configuration complete
+[3/6] Creating self-signed certificate...
+......+..+...+.......+...+......+......+..+......+.......+..+.......+.........+.........+............+.....+....+..+.......+.....+.......+...+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*....+.....+.+.....+...+...............+......+.+......+...+..+...+................+...+.....+.+.........+.....+..........+...+...+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*.....+.........+....+..+.........+.............+......+..+.......+.....+.+..+...+.+.....+.+.........+.....+...+..........+...+..+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+..+.....+..........+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*..+..........+..............+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*.+.+......+...+...+.........+.....+......+...................+...+..+...+......+.......+............+.......................+....+...+..+......+...+.+...+........+........................+.............+.................+.+...+..............+.......+........+......+.+...+..+.+....................+.............+.....+.......+.....+....+..............+.+.....+.+..+.+.....+....+.....+................+..+..........+...+......+...+.....+......+..........+..+...+.........+.+.....+.+.......................+...+.........+.+.....+.......+...+...+......+...+..+......+...+..........+...........+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+-----
+secret/drupal-tls created
+Certificate and key stored in secret: drupal-tls
+[4/6] Preparing Drupal settings and permissions...
+[5/6] Creating storage for Drupal...
+persistentvolumeclaim/drupal-sites-default created
+persistentvolumeclaim/drupal-files created
+Configuring ServiceAccount and SCC for Drupal...
+serviceaccount/drupal-sa configured
+clusterrole.rbac.authorization.k8s.io/system:openshift:scc:anyuid added: "drupal-sa"
+[6/6] Deploying Drupal...
+deployment.apps/drupal created
+service/drupal created
+route.route.openshift.io/drupal created
+
+Waiting for Drupal deployment to be ready...
+Waiting for deployment "drupal" rollout to finish: 0 of 1 updated replicas are available...
+deployment "drupal" successfully rolled out
+
+=== Installation Complete ===
+
+PostgreSQL Cluster Info:
+  Host: drupal-postgres-primary.msu.svc.cluster.local
+  Port: 5432
+  Database: drupal_db
+  Username: drupal_user
+
+Drupal Access:
+  Service: drupal.msu.svc.cluster.local
+  Route: use 'oc get route drupal -n msu'
+
+Next Steps:
+1. Get the route URL (OpenShift):
+   oc get route drupal-ingress -n msu
+
+2. Forward port to access (optional):
+   oc port-forward svc/drupal 8443:443 -n msu
+
+3. Open browser: https://drupal.local (or https://localhost:8443)
+
+4. Run Drupal web installer and configure:
+   - Database: PostgreSQL
+   - Host: drupal-postgres-primary.msu.svc.cluster.local
+   - Database: drupal_db
+   - User: drupal_user
+   - Password: (see above)
+
+Note: Self-signed certificate will show security warning - this is expected.
+
