@@ -18,10 +18,26 @@ NAMESPACE="${1:-default}"
 CLUSTER_NAME="drupal-postgres"
 DRUPAL_SERVICE="drupal"
 DRUPAL_IMAGE="drupal:10-apache"
-POSTGRES_USER="drupal_user"
-POSTGRES_PASSWORD=$(openssl rand -base64 32)
-POSTGRES_DB="drupal_db"
+# Note: Crunchy Data operator creates user and database with cluster name
+POSTGRES_USER="$CLUSTER_NAME"
+POSTGRES_DB="$CLUSTER_NAME"
 HASH_SALT=$(openssl rand -base64 32)
+
+# Check if oc is logged in
+if ! oc whoami &>/dev/null; then
+    echo "ERROR: Not authenticated to OpenShift cluster."
+    echo ""
+    echo "Please run the following command with your token and server URL:"
+    echo "  oc login --token=<your-token> --server=<your-server-url>"
+    echo ""
+    echo "Example:"
+    echo "  oc login --token=sha256~a4XQPmmQF0XaqMYnPd-25VtzJ5Su44p7K1S2ZtR_Q1o --server=https://api.cluster-rhbdl.rhbdl.sandbox3514.opentlc.com:6443"
+    exit 1
+fi
+
+echo "Authenticated as: $(oc whoami)"
+echo "Connected to: $(oc cluster-info | head -1 | sed 's/.*is running at //')"
+echo ""
 
 # Get storage class with proper binding mode (prefer Immediate binding)
 # First try to find default storage class with Immediate binding
@@ -84,6 +100,17 @@ metadata:
   namespace: $NAMESPACE
 spec:
   postgresVersion: 15
+  
+  # PostgreSQL configuration for pod connectivity
+  patroni:
+    dynamicConfiguration:
+      postgresql:
+        pg_hba:
+          - "local   all             all                                     trust"
+          - "host    all             all             127.0.0.1/32            trust"
+          - "host    all             all             ::1/128                 trust"
+          - "host    all             all             0.0.0.0/0               md5"
+          - "host    all             all             ::/0                    md5"
   
   # Instance replicas (3-node cluster)
   instances:
@@ -408,6 +435,103 @@ echo ""
 echo "Waiting for Drupal deployment to be ready..."
 oc rollout status deployment/$DRUPAL_SERVICE -n "$NAMESPACE" --timeout=300s
 
+# Deploy pgAdmin for PostgreSQL management
+echo "[7/6] Deploying pgAdmin..."
+PGADMIN_PASSWORD=$(openssl rand -base64 32)
+
+# Create pgAdmin ServiceAccount
+oc create serviceaccount pgadmin-sa -n "$NAMESPACE" --dry-run=client -o yaml | oc apply -f -
+oc adm policy add-scc-to-user anyuid -z pgadmin-sa -n "$NAMESPACE" 2>/dev/null || true
+
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgadmin-secret
+  namespace: $NAMESPACE
+type: Opaque
+stringData:
+  PGADMIN_DEFAULT_EMAIL: brentjon@redhat.com
+  PGADMIN_DEFAULT_PASSWORD: $PGADMIN_PASSWORD
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  namespace: $NAMESPACE
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+    spec:
+      serviceAccountName: pgadmin-sa
+      containers:
+      - name: pgadmin
+        image: dpage/pgadmin4:latest
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        - name: PGADMIN_DEFAULT_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-secret
+              key: PGADMIN_DEFAULT_EMAIL
+        - name: PGADMIN_DEFAULT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-secret
+              key: PGADMIN_DEFAULT_PASSWORD
+        - name: SCRIPT_NAME
+          value: /pgadmin4
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin
+  namespace: $NAMESPACE
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: pgadmin
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: pgadmin
+  namespace: $NAMESPACE
+spec:
+  to:
+    kind: Service
+    name: pgadmin
+  port:
+    targetPort: http
+  path: /pgadmin4
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+EOF
+
+echo "Waiting for pgAdmin deployment to be ready..."
+oc rollout status deployment/pgadmin -n "$NAMESPACE" --timeout=300s || true
+
 # Output access information
 echo ""
 echo "=== Installation Complete ==="
@@ -422,16 +546,36 @@ echo "Drupal Access:"
 echo "  Service: $DRUPAL_SERVICE.$NAMESPACE.svc.cluster.local"
 echo "  Route: use 'oc get route drupal -n $NAMESPACE'"
 echo ""
+echo "pgAdmin Access:"
+echo "  Email: admin@example.com"
+echo "  Password: $PGADMIN_PASSWORD"
+echo "  Route: use 'oc get route pgadmin -n $NAMESPACE'"
+echo ""
 echo "Next Steps:"
-echo "1. Get the route URL (OpenShift):"
-echo "   oc get route drupal-ingress -n $NAMESPACE"
+echo "1. Get Drupal route URL (OpenShift):"
+echo "   oc get route drupal -n $NAMESPACE"
 echo ""
-echo "2. Forward port to access (optional):"
+echo "2. Get pgAdmin route URL (OpenShift):"
+echo "   oc get route pgadmin -n $NAMESPACE"
+echo ""
+echo "3. Access pgAdmin:"
+echo "   - Go to the pgAdmin route URL"
+echo "   - Login with: admin@example.com / $PGADMIN_PASSWORD"
+echo "   - Add server connection:"
+echo "     Host: $CLUSTER_NAME-primary.$NAMESPACE.svc.cluster.local"
+echo "     Port: 5432"
+echo "     Username: $POSTGRES_USER"
+echo "     Password: (see PostgreSQL password above)"
+echo ""
+echo "4. Forward ports to access locally (optional):"
 echo "   oc port-forward svc/$DRUPAL_SERVICE 8443:443 -n $NAMESPACE"
+echo "   oc port-forward svc/pgadmin 8080:80 -n $NAMESPACE"
 echo ""
-echo "3. Open browser: https://drupal.local (or https://localhost:8443)"
+echo "5. Open browser:"
+echo "   Drupal: https://drupal.local (or https://localhost:8443)"
+echo "   pgAdmin: http://localhost:8080/pgadmin4"
 echo ""
-echo "4. Run Drupal web installer and configure:"
+echo "6. Run Drupal web installer and configure:"
 echo "   - Database: PostgreSQL"
 echo "   - Host: $CLUSTER_NAME-primary.$NAMESPACE.svc.cluster.local"
 echo "   - Database: $POSTGRES_DB"
