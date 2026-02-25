@@ -9,6 +9,7 @@ set -e
 NAMESPACE="${1:-default}"
 CLUSTER_NAME="drupal-postgres"
 DRUPAL_SERVICE="drupal"
+PGADMIN_SERVICE="pgadmin"
 
 echo "=== Cleaning up Drupal Installation ==="
 echo "Namespace: $NAMESPACE"
@@ -18,6 +19,24 @@ if [ "$confirm" != "yes" ]; then
     echo "Cleanup cancelled."
     exit 0
 fi
+
+echo "Deleting pgAdmin deployment..."
+oc delete deployment $PGADMIN_SERVICE -n "$NAMESPACE" --ignore-not-found
+
+echo "Deleting pgAdmin service..."
+oc delete service $PGADMIN_SERVICE -n "$NAMESPACE" --ignore-not-found
+
+echo "Deleting pgAdmin ingress..."
+oc delete ingress pgadmin-ingress -n "$NAMESPACE" --ignore-not-found
+
+echo "Deleting pgAdmin PVCs..."
+oc delete pvc pgadmin-data -n "$NAMESPACE" --ignore-not-found
+
+echo "Deleting pgAdmin ConfigMaps..."
+oc delete configmap pgadmin-config -n "$NAMESPACE" --ignore-not-found
+
+echo "Deleting pgAdmin Secrets..."
+oc delete secret pgadmin-secret -n "$NAMESPACE" --ignore-not-found
 
 echo "Deleting Drupal deployment..."
 oc delete deployment $DRUPAL_SERVICE -n "$NAMESPACE" --ignore-not-found
