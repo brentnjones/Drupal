@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-autoscaler-config
+  namespace: drupal
+data:
+  namespace: "drupal"
+  label: "postgres-operator.crunchydata.com/cluster=drupal-postgres"
+  cpu-up-threshold: "80"
+  mem-up-threshold: "80"
+  cpu-down-threshold: "20"
+  mem-down-threshold: "20"
+  min-replicas: "3"
+  max-replicas: "8"
